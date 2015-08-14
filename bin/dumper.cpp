@@ -43,6 +43,9 @@ BE CAREFUL: the number of channels MUST coincide with the number of channel in t
 #include "../interface/init_Reco_Tree.h"
 #include "../interface/MCPMap.h"
 #include "../interface/CfgManager.h"
+#include "../interface/TagHelper.h"
+#include "../interface/HodoCluster.h"
+#include "../interface/AlignmentOfficer.h"
 
 using namespace std;
 
@@ -50,6 +53,42 @@ using namespace std;
 map<int, int> ADC_to_PMT_map;
 map<int, int> PMT_to_hodoX_map;
 map<int, int> PMT_to_hodoY_map;
+
+
+#define wcXl 0
+#define wcXr 1
+#define wcYd 3
+#define wcYu 2
+
+#define nFibersHodo 64
+//#define nBGOChannels 8
+//#define nSCINTChannels 0
+#define nHODOSMALLChannels 8
+//#define emptyChannelIndex 4
+
+
+#define HODOX1_CHANNELS 64
+#define HODOY1_CHANNELS 64
+#define HODOX2_CHANNELS 64
+#define HODOY2_CHANNELS 64
+
+#define HODOSMALLX_CHANNELS 4
+#define HODOSMALLY_CHANNELS 4
+
+void assignValues( std::vector<float> &target, std::vector<float> source, unsigned int startPos );
+void assignValuesBool( std::vector<bool> &target, std::vector<bool> source, unsigned int startPos );
+//void computeCherenkov(std::vector<float> &cher,std::vector<float> wls);
+void doHodoReconstructionBool( std::vector<bool> values, int &nClusters, int *nFibres, float *pos, float fibreWidth, int clusterMaxFibres, float Cut );
+std::vector<HodoCluster*> getHodoClustersBool( std::vector<bool> hodo, float fibreWidth, int nClusterMax, float Cut );
+
+void doHodoReconstruction( std::vector<float> values, int &nClusters, int *nFibres, float *pos, float fibreWidth, int clusterMaxFibres, float Cut );
+std::vector<HodoCluster*> getHodoClusters( std::vector<float> hodo, float fibreWidth, int nClusterMax, float Cut );
+std::vector<HodoCluster*> getHodoClustersMultipleCuts( std::vector<float> hodo, float fibreWidth, int nClusterMax, std::vector<float> Cut );
+void copyArray( int n, float *source, float *target );
+void doHodoReconstructionMultipleCuts( std::vector<float> values, int &nClusters, int *nFibres, float *pos, float fibreWidth, int clusterMaxFibres, std::vector<float> Cut );
+//float timeSampleUnit(int drs4Freq);
+
+
 
 void FillMaps()
 {  
@@ -210,6 +249,11 @@ int main (int argc, char** argv)
     //    int trigPos2 = CFG.GetOpt<int>("global", "trigPos2");
     int trigPos2 = -1;
 
+
+
+    std::string tag = "V00";
+    std::string theBeamEnergy = Form("%.0f",50);
+
     //---------output tree----------------
     TFile* outROOT = TFile::Open(outputFile.c_str(), "recreate");  
     outROOT->cd();
@@ -220,7 +264,9 @@ int main (int argc, char** argv)
 
     TTree* outTree = new TTree("reco_tree", "reco_tree");
     outTree->SetDirectory(0);
+    std::cout << " >>> SetOutTree HERE!!!!!!!!!!!!!! " << std::endl;
     SetOutTree(outTree);
+    std::cout << " >>> SetOutTree done " << std::endl;
 
     int iRun=0;
     int start=0;
@@ -230,7 +276,8 @@ int main (int argc, char** argv)
         int run = CFG.GetOpt<int>("global", "runs", iRun);
 
         //-----Definitions
-        vector<float> digiCh[18];
+        vector<float> digiCh[18]; 
+        vector<float> digiCh_dummy[18];
         float timeCF[18], timeCFcorr[18], timeCF30[18];
         float timeOT[18], timeStart[18], timeStop[18], ampMaxT[18];
         float timeStart_1000[18], timeStop_1000[18], timeStart_150[18], timeStop_150[18];
@@ -240,8 +287,8 @@ int main (int argc, char** argv)
         float tStart, tStop;
 
         //--reading wire chamber from other tree --
-        TChain* positionTree = new TChain("outputTree");
-        InitTree2(positionTree);
+	//         TChain* positionTree = new TChain("outputTree");
+	//         InitTree2(positionTree);
 
         //---Chain
         TChain* chain = new TChain("H4tree");
@@ -251,7 +298,8 @@ int main (int argc, char** argv)
         // sprintf(command1, "find  %s/%d/*/dqmPlotstotal.root > ntuples/listTemp_%d.txt", (inputFolder).c_str(), run, run);
         // system(command1);
         char command2[300];
-        sprintf(command2, "find  %s/%d.root > ntuples/listTemp2_%d.txt", (inputFolder).c_str(), run, run);
+	//        sprintf(command2, "find  %s/%d.root > ntuples/listTemp2_%d.txt", (inputFolder).c_str(), run, run);
+        sprintf(command2, "find  %s/%d/*.root > ntuples/listTemp2_%d.txt", (inputFolder).c_str(), run, run);
         system(command2);
 
         // char list1[200];
@@ -301,6 +349,11 @@ int main (int argc, char** argv)
         // system(command3);
         system(command4);
       
+
+	TagHelper tagHelper(tag,theBeamEnergy);
+	AlignmentOfficer alignOfficer(tagHelper.getAlignmentFileName());
+
+
         cout << "start reading run: " << run << endl;
 
         //-----Data loop--------------------------------------------------------
@@ -312,6 +365,7 @@ int main (int argc, char** argv)
             for(int iCh=0; iCh<18; iCh++)
             {
                 digiCh[iCh].clear();
+                digiCh_dummy[iCh].clear();
 
             }
             //---Read the entry
@@ -325,68 +379,400 @@ int main (int argc, char** argv)
                 continue;
 	    }
 
-            hodoXpos = -1;
-            hodoYpos = -1;
-	    /*	    for(unsigned int iCh=0; iCh<nAdcChannels; iCh++)
-            {
-	      std::cout<<"debug: ch "<<iCh<<std::endl;
-
-                if(adcBoard[iCh] == 100728833 && adcChannel[iCh] == 0) 
-                    sci_front_adc = adcData[iCh];                
-                if(adcBoard[iCh] == 100728833 && adcChannel[iCh] == 1) 
-                    bgo_back_adc = adcData[iCh];
-                if(adcBoard[iCh] == 201392129)
-                {
-                    int tmpPAD = ADC_to_PMT_map[adcChannel[iCh]];
-                    if(tmpPAD >= 0 && tmpPAD < 32)
-                    {
-                        if(adcData[iCh] > 700)
-                        {
-                            hodoXpos = PMT_to_hodoX_map[tmpPAD];
-                            hodoX[PMT_to_hodoX_map[tmpPAD]] = 1;
-                        }
-                        else
-                            hodoX[PMT_to_hodoX_map[tmpPAD]] = 0;
-                    }
-                    else if(tmpPAD >= 32 && tmpPAD < 64)
-                    {
-                        if(adcData[iCh] > 700)
-                        {
-                            hodoYpos = PMT_to_hodoY_map[tmpPAD];
-                            hodoY[PMT_to_hodoY_map[tmpPAD]] = 1;
-                        }
-                        else
-                            hodoY[PMT_to_hodoY_map[tmpPAD]] = 0;
-                    }
-                }
+	    //             hodoXpos = -1;
+	    //             hodoYpos = -1;
 	    
+	    // 	    for(unsigned int iCh=0; iCh<nTdcChannels; iCh++)
+	    // 	      {
+	    // 		  tdc_front = tdcData[iCh];
+	    // 	      }
+	    
+
+	    //fill HODOSMALLvalues
+ 	    //std::cout << " fill HODOSMALLvalues " << std::endl;
+	    std::vector<float>  HODOSMALLvalues;
+	    HODOSMALLvalues.clear();
+ 	    HODOSMALLvalues.resize(nHODOSMALLChannels, 0);
+	    for(unsigned int iAdc=0; iAdc<nAdcChannels; ++iAdc){
+	      //std::cout << "debug: ch " << iAdc << std::endl;
+	      //small hodo for 2015 read out with adc board
+	      if(adcBoard[iAdc] == 0x6010001){ 
+		unsigned int ch = adcChannel[iAdc];
+		if(ch < 2 || ch > 13) continue;
+		if(ch < 6){ //2,3,4,5 are on y; 10,11,12,13 on x
+		  HODOSMALLvalues.at(ch-2) = adcData[iAdc];
+		}
+		else if(ch > 9){
+		  HODOSMALLvalues.at(ch-6) = adcData[iAdc];
+		}
+	      }
 	    }
-	    */
+	    
+
+	    //fillTDC
+	    //std::cout << " fill TDC " << std::endl;
+	    std::vector<float>   TDCreco;
+ 	    TDCreco.clear();
+ 	    TDCreco.resize(2,-999);
+	    
+	    std::vector<unsigned int> tdc_readings[4];
+	    float tdc_recox = -999;
+	    float tdc_recoy = -999;
+	    
+	    for(unsigned int iTdc = 0; iTdc<nTdcChannels; ++iTdc){
+	      if(tdcBoard[iTdc] == 0x07020001 && tdcChannel[iTdc] < 4){
+		  tdc_readings[tdcChannel[iTdc]].push_back((float)tdcData[iTdc]);
+		}
+	    }
+	    if (tdc_readings[wcXl].size() != 0 && tdc_readings[wcXr].size() != 0){
+	      float TXl = *std::min_element(tdc_readings[wcXl].begin(),tdc_readings[wcXl].begin()+tdc_readings[wcXl].size());
+	      float TXr = *std::min_element(tdc_readings[wcXr].begin(),tdc_readings[wcXr].begin()+tdc_readings[wcXr].size());
+	      float X = (TXr-TXl)*0.005; // = /40./5./10. //position in cm 0.2mm/ns with 25ps LSB TDC
+	      tdc_recox = X;
+	    }
+	    if (tdc_readings[wcYd].size() != 0 && tdc_readings[wcYu].size() != 0){
+	      float TYd = *std::min_element(tdc_readings[wcYd].begin(),tdc_readings[wcYd].begin()+tdc_readings[wcYd].size());
+	      float TYu = *std::min_element(tdc_readings[wcYu].begin(),tdc_readings[wcYu].begin()+tdc_readings[wcYu].size());
+	      float Y = (TYu-TYd)*0.005; // = /40./5./10. //position in cm 0.2mm/ns with 25ps LSB TDC
+	      tdc_recoy = Y;
+	    }
+	    
+	    nTDCHits[0] = tdc_readings[wcXl].size();
+	    nTDCHits[1] = tdc_readings[wcXr].size();
+	    nTDCHits[2] = tdc_readings[wcYd].size();
+	    nTDCHits[3] = tdc_readings[wcYu].size();
+	    
+	    if(tdc_recox >- 999 && tdc_recoy >- 999){
+	      TDCreco[0] = tdc_recox;
+	      TDCreco[1] = tdc_recoy;
+	    }
+
+
+	    //fillFiber 
+	    //std::cout << " fill fibers " << std::endl;
+	    std::vector<int> fiberOrderA;
+	    std::vector<int> fiberOrderB;
+
+	    fiberOrderA.clear();
+	    fiberOrderB.clear();
+
+	    fiberOrderA.push_back(31);
+	    fiberOrderA.push_back(29);
+	    fiberOrderA.push_back(23);
+	    fiberOrderA.push_back(21);
+	    fiberOrderA.push_back(5);
+	    fiberOrderA.push_back(7);
+	    fiberOrderA.push_back(15);
+	    fiberOrderA.push_back(13);
+	    fiberOrderA.push_back(1);
+	    fiberOrderA.push_back(3);
+	    fiberOrderA.push_back(11);
+	    fiberOrderA.push_back(9);
+	    fiberOrderA.push_back(6);
+	    fiberOrderA.push_back(8);
+	    fiberOrderA.push_back(16);
+	    fiberOrderA.push_back(14);
+	    fiberOrderA.push_back(17);
+	    fiberOrderA.push_back(27);
+	    fiberOrderA.push_back(19);
+	    fiberOrderA.push_back(25);
+	    fiberOrderA.push_back(24);
+	    fiberOrderA.push_back(22);
+	    fiberOrderA.push_back(32);
+	    fiberOrderA.push_back(30);
+	    fiberOrderA.push_back(4);
+	    fiberOrderA.push_back(2);
+	    fiberOrderA.push_back(12);
+	    fiberOrderA.push_back(10);
+	    fiberOrderA.push_back(20);
+	    fiberOrderA.push_back(18);
+	    fiberOrderA.push_back(28);
+	    fiberOrderA.push_back(26);
+
+	    fiberOrderB.push_back(54);
+	    fiberOrderB.push_back(64);
+	    fiberOrderB.push_back(56);
+	    fiberOrderB.push_back(62);
+	    fiberOrderB.push_back(49);
+	    fiberOrderB.push_back(51);
+	    fiberOrderB.push_back(59);
+	    fiberOrderB.push_back(57);
+	    fiberOrderB.push_back(53);
+	    fiberOrderB.push_back(55);
+	    fiberOrderB.push_back(63);
+	    fiberOrderB.push_back(61);
+	    fiberOrderB.push_back(45);
+	    fiberOrderB.push_back(47);
+	    fiberOrderB.push_back(37);
+	    fiberOrderB.push_back(39);
+	    fiberOrderB.push_back(34);
+	    fiberOrderB.push_back(42);
+	    fiberOrderB.push_back(36);
+	    fiberOrderB.push_back(44);
+	    fiberOrderB.push_back(50);
+	    fiberOrderB.push_back(52);
+	    fiberOrderB.push_back(58);
+	    fiberOrderB.push_back(60);
+	    fiberOrderB.push_back(38);
+	    fiberOrderB.push_back(48);
+	    fiberOrderB.push_back(40);
+	    fiberOrderB.push_back(46);
+	    fiberOrderB.push_back(41);
+	    fiberOrderB.push_back(43);
+	    fiberOrderB.push_back(33);
+	    fiberOrderB.push_back(35);
+
+	    //fillHODO
+	    //std::cout << " fill HODO " << std::endl;
+	    std::vector<bool>    HODOX1;
+	    std::vector<bool>    HODOX2;
+	    std::vector<bool>    HODOY1;
+	    std::vector<bool>    HODOY2;
+	    HODOX1.clear();  HODOX1.resize(nFibersHodo,false);
+	    HODOX2.clear();  HODOX2.resize(nFibersHodo,false);
+	    HODOY1.clear();  HODOY1.resize(nFibersHodo,false);
+	    HODOY2.clear();  HODOY2.resize(nFibersHodo,false);
+	    std::vector<bool> *hodo;
+
+	    for(unsigned int iPat=0; iPat<nPatterns; ++iPat){
+	      if(patternBoard[iPat] == 0x08020001 || patternBoard[iPat] == 0x08020002){
+		// here is where the hodoscope mapping is done
+		if(patternBoard[iPat] == 0x08020001){
+		  if(patternChannel[iPat] < 2) hodo = &HODOY2;
+		  else hodo = &HODOX2;
+		}
+		else if(patternBoard[iPat] == 0x08020002){
+		  if(patternChannel[iPat] < 2) hodo = &HODOY1;
+		  else hodo = &HODOX1;
+		}
+		std::vector<int> *fiberorder = (bool)(patternChannel[iPat]&0b1) ? &fiberOrderB : &fiberOrderA;
+		for(unsigned int j=0; j<32; j++){
+		  bool thisfibon = (pattern[iPat]>>j)&0b1;
+		  hodo->at(fiberorder->at(j)-1) = thisfibon;
+		}
+	      }
+	    }
+// 	    for(unsigned int iF=0; iF<HODOX2.size(); ++iF)
+// 	      std::cout << "iF = " << iF << " HODOX2.at(iF) = " << HODOX2.at(iF) << std::endl;
+	    
+
+	    // hodo reconstruction 
+	    std::vector<bool> hodoX1_values(HODOX1_CHANNELS, -1.);
+	    std::vector<bool> hodoY1_values(HODOY1_CHANNELS, -1.);
+	    assignValuesBool( hodoX1_values, HODOX1, 0. );
+	    assignValuesBool( hodoY1_values, HODOY1, 0. );
+
+
+	    std::vector<bool> hodoX2_values(HODOX2_CHANNELS, -1.);
+	    std::vector<bool> hodoY2_values(HODOY2_CHANNELS, -1.);
+	    assignValuesBool( hodoX2_values, HODOX2, 0 );
+	    assignValuesBool( hodoY2_values, HODOY2, 0 );
+
+
+	    std::vector<float> hodoSmallX_values(HODOSMALLX_CHANNELS, -1.);
+	    std::vector<float> hodoSmallY_values(HODOSMALLY_CHANNELS, -1.);
+	    assignValues( hodoSmallY_values, HODOSMALLvalues, 0 );
+	    assignValues( hodoSmallX_values, HODOSMALLvalues, 4 );
+
+
+	    // hodo cluster reconstruction
+	    int clusterMaxFibres = 4;
+	    doHodoReconstructionBool( hodoX1_values    , nClusters_hodoX1    , nFibres_hodoX1    , pos_hodoX1    , 0.5, clusterMaxFibres, 0. );
+	    doHodoReconstructionBool( hodoY1_values    , nClusters_hodoY1    , nFibres_hodoY1    , pos_hodoY1    , 0.5, clusterMaxFibres, 0. );
+	    doHodoReconstructionBool( hodoX2_values    , nClusters_hodoX2    , nFibres_hodoX2    , pos_hodoX2    , 0.5, clusterMaxFibres , 0.);
+	    doHodoReconstructionBool( hodoY2_values    , nClusters_hodoY2    , nFibres_hodoY2    , pos_hodoY2    , 0.5, clusterMaxFibres, 0. );
+
+	    std::vector<float> pedMeanX,pedMeanY, pedSigmaX, pedSigmaY,cutValuesX,cutValuesY;
+	    //values obtained fitting pedestals from run 2778
+	    pedMeanY.push_back(155.15);
+	    pedMeanY.push_back(141.30);
+	    pedMeanY.push_back(152.90);
+	    pedMeanY.push_back(152.13);
+
+	    pedMeanX.push_back(146.89);     
+	    pedMeanX.push_back(139.89);
+	    pedMeanX.push_back(151.73);
+	    pedMeanX.push_back(53.27);
+
+	    pedSigmaY.push_back(1.20);
+	    pedSigmaY.push_back(1.25);
+	    pedSigmaY.push_back(1.60);
+	    pedSigmaY.push_back(1.20);
+
+	    pedSigmaX.push_back(1.28);
+	    pedSigmaX.push_back(1.32);
+	    pedSigmaX.push_back(1.31);
+	    pedSigmaX.push_back(0.83);
+
+	    for(int i=0;i<pedMeanX.size();++i){
+	      cutValuesX.push_back(pedMeanX[i]+5*pedSigmaX[i]);
+	      cutValuesY.push_back(pedMeanY[i]+5*pedSigmaY[i]);
+	    }
+	    doHodoReconstructionMultipleCuts( hodoSmallX_values, nClusters_hodoSmallX, nFibres_hodoSmallX, pos_hodoSmallX, 1.0, 1, cutValuesX);
+	    doHodoReconstructionMultipleCuts( hodoSmallY_values, nClusters_hodoSmallY, nFibres_hodoSmallY, pos_hodoSmallY, 1.0, 1, cutValuesY);
+
+	    copyArray( nClusters_hodoX1, pos_hodoX1, pos_corr_hodoX1 );
+	    copyArray( nClusters_hodoY1, pos_hodoY1, pos_corr_hodoY1 );
+	    copyArray( nClusters_hodoX2, pos_hodoX2, pos_corr_hodoX2 );
+	    copyArray( nClusters_hodoY2, pos_hodoY2, pos_corr_hodoY2 );
+	    copyArray( nClusters_hodoSmallX, pos_hodoSmallX, pos_corr_hodoSmallX );
+	    copyArray( nClusters_hodoSmallY, pos_hodoSmallY, pos_corr_hodoSmallY );
+
+	    alignOfficer.fix("hodoX1", nClusters_hodoX1, pos_corr_hodoX1);
+	    alignOfficer.fix("hodoY1", nClusters_hodoY1, pos_corr_hodoY1);
+	    alignOfficer.fix("hodoX2", nClusters_hodoX2, pos_corr_hodoX2);
+	    alignOfficer.fix("hodoY2", nClusters_hodoY2, pos_corr_hodoY2);
+
+// 	    nTDCHits[0] = nTDCHits->at(0);
+// 	    nTDCHits[1] = nTDCHits->at(1);
+// 	    nTDCHits[2] = nTDCHits->at(2);
+// 	    nTDCHits[3] = nTDCHits->at(3);
+
+	    wc_x = TDCreco[0];
+	    wc_y = TDCreco[1];
+
+	    if( nRuns >= 170 ) wc_y = -wc_y;
+
+	    wc_x_corr = wc_x + alignOfficer.getOffset("wc_x");
+	    wc_y_corr = wc_y + alignOfficer.getOffset("wc_y");
+
+ 
+
+
+
+	    int posOf2FibClustX1=0;
+	    int nrOf2FibreClustersX1 = 0;
+	    for( int i=0; i<nClusters_hodoX1; ++i ) {
+	      if( nFibres_hodoX1[i]==2  ) {  
+		++nrOf2FibreClustersX1;
+		posOf2FibClustX1 = i ; } 
+	    }
+	    if( nrOf2FibreClustersX1 == 1){
+	      pos_2FibClust_hodoX1 =   pos_hodoX1[ posOf2FibClustX1] ;
+	    }else{
+	      pos_2FibClust_hodoX1 =  -999 ;}
+
+	    if(nClusters_hodoX1==1){
+	      cluster_pos_hodoX1 = pos_hodoX1[0];
+	    }else if(nrOf2FibreClustersX1==1){
+	      cluster_pos_hodoX1 = pos_hodoX1[ posOf2FibClustX1];
+	    }else{ cluster_pos_hodoX1 = -999;}
+
+
+	    int posOf2FibClustX2=0;
+	    int nrOf2FibreClustersX2 = 0;
+	    for( int i=0; i<nClusters_hodoX2; ++i ) {
+	      if( nFibres_hodoX2[i]==2  ) {  
+		++nrOf2FibreClustersX2;
+		posOf2FibClustX2 = i ; } 
+	    }
+	    if( nrOf2FibreClustersX2 == 1){
+	      pos_2FibClust_hodoX2 =   pos_hodoX2[ posOf2FibClustX2] ;
+	    }else{
+	      pos_2FibClust_hodoX2 =  -999 ;}
+
+	    if(nClusters_hodoX2==1){
+	      cluster_pos_hodoX2 = pos_hodoX2[0];
+	    }else if(nrOf2FibreClustersX2==1){
+	      cluster_pos_hodoX2 = pos_hodoX2[ posOf2FibClustX2];
+	    }else{ cluster_pos_hodoX2 = -999;}
+
+	    int posOf2FibClustY1=0;
+	    int nrOf2FibreClustersY1 = 0;
+	    for( int i=0; i<nClusters_hodoY1; ++i ) {
+	      if( nFibres_hodoY1[i]==2  ) {  
+		++nrOf2FibreClustersY1;
+		posOf2FibClustY1 = i ; } 
+	    }
+	    if( nrOf2FibreClustersY1 == 1){
+	      pos_2FibClust_hodoY1 =   pos_hodoY1[ posOf2FibClustY1] ;
+	    }else{
+	      pos_2FibClust_hodoY1 =  -999 ;}
+     
+	    if(nClusters_hodoY1==1){
+	      cluster_pos_hodoY1 = pos_hodoY1[0];
+	    }else if(nrOf2FibreClustersY1==1){
+	      cluster_pos_hodoY1 = pos_hodoY1[ posOf2FibClustY1];
+	    }else{ cluster_pos_hodoY1 = -999;}
+   
+
+	    int posOf2FibClustY2=0;
+	    int nrOf2FibreClustersY2 = 0;
+	    for( int i=0; i<nClusters_hodoY2; ++i ) {
+	      if( nFibres_hodoY2[i]==2  ) {  
+		++nrOf2FibreClustersY2;
+		posOf2FibClustY2 = i ; } 
+	    }
+	    if( nrOf2FibreClustersY2 == 1){
+	      pos_2FibClust_hodoY2 =   pos_hodoY2[ posOf2FibClustY2] ;
+	    }else{
+	      pos_2FibClust_hodoY2 =  -999 ;}
+
+	    if(nClusters_hodoY2==1){
+	      cluster_pos_hodoY2 = pos_hodoY2[0];
+	    }else if(nrOf2FibreClustersY2==1){
+	      cluster_pos_hodoY2 = pos_hodoY2[ posOf2FibClustY2];
+	    }else{ cluster_pos_hodoY2 = -999;}
+
+
+	    pos_2FibClust_corr_hodoX1 = pos_2FibClust_hodoX1 + alignOfficer.getOffset("hodoX1");
+	    pos_2FibClust_corr_hodoY1 = pos_2FibClust_hodoY1 + alignOfficer.getOffset("hodoY1");   
+	    pos_2FibClust_corr_hodoX2 = pos_2FibClust_hodoX2 + alignOfficer.getOffset("hodoX2");   
+	    pos_2FibClust_corr_hodoY2 = pos_2FibClust_hodoY2 + alignOfficer.getOffset("hodoY2");
+
+
+	    cluster_pos_corr_hodoX1 = cluster_pos_hodoX1 + alignOfficer.getOffset("hodoX1");
+	    cluster_pos_corr_hodoY1 = cluster_pos_hodoY1 + alignOfficer.getOffset("hodoY1");   
+	    cluster_pos_corr_hodoX2 = cluster_pos_hodoX2 + alignOfficer.getOffset("hodoX2");   
+	    cluster_pos_corr_hodoY2 = cluster_pos_hodoY2 + alignOfficer.getOffset("hodoY2");
+	    // hodo reconstruction 
+
 
 	    //---Read digitizer samples
-	//	for(unsigned int iSample=0; iSample<nDigiSamples; iSample++) {
-	for(unsigned int iSample=0; iSample<18432; iSample++) {
-	  if (digiGroup[iSample]*9+digiChannel[iSample]==6 || digiGroup[iSample]*9+digiChannel[iSample]==7)
-                digiCh[digiGroup[iSample]*9+digiChannel[iSample]].push_back(-digiSampleValue[iSample]);
-	  else
-                digiCh[digiGroup[iSample]*9+digiChannel[iSample]].push_back(digiSampleValue[iSample]);
-	}
+	    // NB patch per leggere i primi 5 canali del secondo gruppo
+	    //	for(unsigned int iSample=0; iSample<nDigiSamples; iSample++) {
+	    for(unsigned int iSample=0; iSample<18432; iSample++) {
+	      if (digiGroup[iSample]*9+digiChannel[iSample]==6 || digiGroup[iSample]*9+digiChannel[iSample]==7){
+		//	    std::cout << " digiGroup[iSample]*9+digiChannel[iSample] = " << digiGroup[iSample]*9+digiChannel[iSample] << std::endl;
+		//	    if( (digiGroup[iSample]*9+digiChannel[iSample]) >= 9)
+		digiCh_dummy[(digiGroup[iSample]*9+digiChannel[iSample])].push_back(-digiSampleValue[iSample]);
+	      }
+	      else{
+		//	    if( (digiGroup[iSample]*9+digiChannel[iSample]) >= 9)         
+		digiCh_dummy[digiGroup[iSample]*9+digiChannel[iSample]].push_back(digiSampleValue[iSample]);
+	      }
+	    }
+	    
+	    //	std::cout << " fino a qui ok " << std::endl;
+	    
+	    for(int jCh=0; jCh<18; jCh++){
+	      for(int nSamp=0; nSamp<digiCh_dummy[jCh].size(); ++nSamp){
+		if(jCh < 5) digiCh[jCh].push_back(digiCh_dummy[jCh+9].at(nSamp));
+		else digiCh[jCh].push_back(0.);
+	      }
+	    }
+	
+
 
 	    int triggerTime=100;                  //DON'T CHANGE THIS!!!!!
 	    SubtractBaseline(5, 25, &digiCh[trigPos]);  //trigger baseline subtraction
 	    triggerTime=int(TimeConstFrac(triggerTime, 400, &digiCh[trigPos], 1.)/0.2); //trigger
-	    if (triggerTime<100 || triggerTime >800)  
-                continue;
+	    if(triggerTime<100 || triggerTime >800) continue;
 
 	    //---loop over MPC's channels
 	    for(int jCh=0; jCh<nCh; jCh++)
+	    //	    for(int jCh=9; jCh<(9+nCh); jCh++)
             {
                 string currentMCP = CFG.GetOpt<string>("global", "MCPs", jCh);
                 int iCh = CFG.GetOpt<int>(currentMCP, "digiChannel");
 
+
 		if(currentMCP.find("clock") != string::npos || currentMCP.find("TorGain1") != string::npos || currentMCP.find("TorGain2") != string::npos ) 
                 { 
-                    SubtractBaseline(5, 25, &digiCh[iCh]);  
+
+		  std::cout << " sono nel caso clock " << std::endl;
+		  
+		    SubtractBaseline(5, 25, &digiCh[iCh]);  
                     ampMax[iCh] = AmpMax(51, 1000, &digiCh[iCh]);
                     intBase[iCh] = ComputeIntegral(26, 50, &digiCh[iCh]);
                     intSignal[iCh] = ComputeIntegral(51, 1000, &digiCh[iCh]);
@@ -564,4 +950,215 @@ int main (int argc, char** argv)
 //---------Done-----------------------------------------------------------------
 }
 
-        
+
+
+
+void assignValues( std::vector<float> &target, std::vector<float> source, unsigned int startPos ) {
+
+  for( unsigned i=0; i<target.size(); ++i ) 
+    target[i] = source[startPos+i];
+
+}
+
+
+void assignValuesBool( std::vector<bool> &target, std::vector<bool> source, unsigned int startPos ) {
+
+  for( unsigned i=0; i<target.size(); ++i ) 
+    target[i] = source[startPos+i];
+
+}
+
+std::vector<HodoCluster*> getHodoClusters( std::vector<float> hodo, float fibreWidth, int nClusterMax, float Cut ) {
+
+  std::vector<HodoCluster*> clusters;
+
+  HodoCluster* currentCluster = new HodoCluster( hodo.size(), fibreWidth );
+
+  for( unsigned i=0; i<hodo.size(); ++i ) {
+
+    if( hodo[i] > Cut) { // hit
+
+      if( currentCluster->getSize() < nClusterMax ) {
+
+        currentCluster->addFibre( i );
+
+      } else {
+
+        clusters.push_back( currentCluster ); // store old one
+        currentCluster = new HodoCluster( hodo.size(), fibreWidth );   // create a new one
+        currentCluster->addFibre( i );        // get that fibre!
+
+      }
+
+    } else { // as soon as you find a hole
+      
+      if( currentCluster->getSize() > 0 ) {
+     
+        clusters.push_back( currentCluster ); // store old one
+        currentCluster = new HodoCluster( hodo.size(), fibreWidth );   // create a new one
+
+      }
+
+    }
+
+
+  } // for fibres
+
+
+  if( currentCluster->getSize()>0 )
+    clusters.push_back( currentCluster ); // store last cluster
+
+
+  return clusters;
+
+}
+
+std::vector<HodoCluster*> getHodoClustersMultipleCuts( std::vector<float> hodo, float fibreWidth, int nClusterMax, std::vector<float> Cut ) {
+
+  std::vector<HodoCluster*> clusters;
+
+  HodoCluster* currentCluster = new HodoCluster( hodo.size(), fibreWidth );
+
+  for( unsigned i=0; i<hodo.size(); ++i ) {
+
+    if( hodo[i] > Cut[i]) { // hit
+
+      if( currentCluster->getSize() < nClusterMax ) {
+
+        currentCluster->addFibre( i );
+
+      } else {
+
+        clusters.push_back( currentCluster ); // store old one
+        currentCluster = new HodoCluster( hodo.size(), fibreWidth );   // create a new one
+        currentCluster->addFibre( i );        // get that fibre!
+
+      }
+
+    } else { // as soon as you find a hole
+      
+      if( currentCluster->getSize() > 0 ) {
+     
+        clusters.push_back( currentCluster ); // store old one
+        currentCluster = new HodoCluster( hodo.size(), fibreWidth );   // create a new one
+
+      }
+
+    }
+
+
+  } // for fibres
+
+
+  if( currentCluster->getSize()>0 )
+    clusters.push_back( currentCluster ); // store last cluster
+
+
+  return clusters;
+
+}
+
+
+
+
+void doHodoReconstruction( std::vector<float> values, int &nClusters, int *nFibres, float *pos, float fibreWidth, int clusterMaxFibres, float Cut ) {
+
+  std::vector<HodoCluster*> clusters = getHodoClusters( values, fibreWidth, clusterMaxFibres, Cut );
+
+  nClusters = clusters.size();
+  for( unsigned i=0; i<clusters.size(); ++i ) {
+    nFibres[i] = clusters[i]->getSize();
+    pos[i] = clusters[i]->getPosition();
+  }
+
+}
+
+void doHodoReconstructionMultipleCuts( std::vector<float> values, int &nClusters, int *nFibres, float *pos, float fibreWidth, int clusterMaxFibres, std::vector<float> Cut ) {
+
+  std::vector<HodoCluster*> clusters = getHodoClustersMultipleCuts( values, fibreWidth, clusterMaxFibres, Cut );
+
+  nClusters = clusters.size();
+  for( unsigned i=0; i<clusters.size(); ++i ) {
+    nFibres[i] = clusters[i]->getSize();
+    pos[i] = clusters[i]->getPosition();
+  }
+
+}
+
+
+void copyArray( int n, float *source, float *target ) {
+
+  for( unsigned i=0; i<n; ++i ) 
+    target[i] = source[i];
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+std::vector<HodoCluster*> getHodoClustersBool( std::vector<bool> hodo, float fibreWidth, int nClusterMax, float Cut ) {
+
+  std::vector<HodoCluster*> clusters;
+
+  HodoCluster* currentCluster = new HodoCluster( hodo.size(), fibreWidth );
+
+  for( unsigned i=0; i<hodo.size(); ++i ) {
+
+    if( hodo[i] > Cut) { // hit
+
+      if( currentCluster->getSize() < nClusterMax ) {
+
+        currentCluster->addFibre( i );
+
+      } else {
+
+        clusters.push_back( currentCluster ); // store old one
+        currentCluster = new HodoCluster( hodo.size(), fibreWidth );   // create a new one
+        currentCluster->addFibre( i );        // get that fibre!
+
+      }
+
+    } else { // as soon as you find a hole
+      
+      if( currentCluster->getSize() > 0 ) {
+     
+        clusters.push_back( currentCluster ); // store old one
+        currentCluster = new HodoCluster( hodo.size(), fibreWidth );   // create a new one
+
+      }
+
+    }
+
+
+  } // for fibres
+
+
+  if( currentCluster->getSize()>0 )
+    clusters.push_back( currentCluster ); // store last cluster
+
+
+  return clusters;
+
+}
+
+
+void doHodoReconstructionBool( std::vector<bool> values, int &nClusters, int *nFibres, float *pos, float fibreWidth, int clusterMaxFibres, float Cut ) {
+
+  std::vector<HodoCluster*> clusters = getHodoClustersBool( values, fibreWidth, clusterMaxFibres, Cut );
+
+  nClusters = clusters.size();
+  for( unsigned i=0; i<clusters.size(); ++i ) {
+    nFibres[i] = clusters[i]->getSize();
+    pos[i] = clusters[i]->getPosition();
+  }
+
+}

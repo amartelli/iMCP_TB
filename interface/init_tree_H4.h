@@ -12,13 +12,19 @@ extern     unsigned int          evtTimeStart;
 //    unsigned int          boardTriggerBit;
 //    unsigned int          triggerWord;
 extern     unsigned int          nAdcChannels;
-extern    unsigned int          adcBoard[100];   
+extern     unsigned int          adcBoard[100];   
 extern     unsigned int          adcChannel[100];   
 extern     unsigned int          adcData[100];   
 extern    unsigned int          nTdcChannels;
 extern    unsigned int          tdcBoard[10];   
 extern    unsigned int          tdcChannel[10];  
 extern    unsigned int          tdcData[10];  
+
+extern   unsigned int          nPatterns;
+extern   unsigned int          pattern[16];
+extern   unsigned int          patternBoard[16];
+extern   unsigned int          patternChannel[16];
+
 extern    unsigned int          nDigiSamples;
 extern    unsigned int          digiGroup[100000];   
 extern    unsigned int          digiChannel[100000];   
@@ -46,6 +52,12 @@ extern    TBranch        *b_nTdcChannels;   //!
 extern    TBranch        *b_tdcBoard;   //!
 extern    TBranch        *b_tdcChannel;   //!
 extern    TBranch        *b_tdcData;   //!
+
+extern    TBranch        *b_nPatterns;
+extern    TBranch        *b_pattern;
+extern    TBranch        *b_patternBoard;
+extern    TBranch        *b_patternChannel;
+
 extern    TBranch        *b_nDigiSamples;   //!
 extern    TBranch        *b_digiGroup;   //!
 extern    TBranch        *b_digiChannel;   //!

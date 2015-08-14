@@ -3,8 +3,8 @@ ROOT_LIB:=`root-config --libs --glibs`
 ROOT_FLAGS:=`root-config --cflags --ldflags`
 ROOT_INCLUDE:=`root-config --incdir`
 
-DEPS= interface/MCPMap.h interface/init_Reco_Tree.h interface/init_tree_H4.h interface/analysis_tools.h interface/histoFuncT.h interface/ScaleEstimators.h interface/CfgManager.h
-DEPS_OBJ= lib/MCPMap.o lib/init_Reco_Tree.o lib/init_tree_H4.o lib/analysis_tools.o lib/histoFuncT.o lib/ScaleEstimators.o lib/CfgManager.o
+DEPS= interface/MCPMap.h interface/init_Reco_Tree.h interface/init_tree_H4.h interface/analysis_tools.h interface/histoFuncT.h interface/ScaleEstimators.h interface/CfgManager.h interface/TagHelper.h interface/HodoCluster.h interface/AlignmentOfficer.h
+DEPS_OBJ= lib/MCPMap.o lib/init_Reco_Tree.o lib/init_tree_H4.o lib/analysis_tools.o lib/histoFuncT.o lib/ScaleEstimators.o lib/CfgManager.o lib/TagHelper.o lib/HodoCluster.o lib/AlignmentOfficer.o
 
 CC = g++
 CFLAGS = -std=c++11
